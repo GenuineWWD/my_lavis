@@ -5,31 +5,31 @@
  For full license text, see the LICENSE file in the repo root or https://opensource.org/licenses/BSD-3-Clause
 """
 import contextlib
+import datetime
 import logging
 import os
 import time
-import datetime
 
 import torch
-import torch.nn as nn
 import torch.distributed as dist
+import torch.nn as nn
 import torch.nn.functional as F
+from transformers import BertTokenizer
 
 import lavis.common.dist_utils as dist_utils
 from lavis.common.dist_utils import download_cached_file
-from lavis.common.utils import is_url
 from lavis.common.logger import MetricLogger
+from lavis.common.utils import is_url
 from lavis.models.base_model import BaseModel
 from lavis.models.blip2_models.Qformer import BertConfig, BertLMHeadModel
-from lavis.models.eva_vit import create_eva_vit_g
 from lavis.models.clip_vit import create_clip_vit_L
-from transformers import BertTokenizer
+from lavis.models.eva_vit import create_eva_vit_g
 
 
 class Blip2Base(BaseModel):
     @classmethod
     def init_tokenizer(cls, truncation_side="right"):
-        tokenizer = BertTokenizer.from_pretrained("bert-base-uncased", truncation_side=truncation_side)
+        tokenizer = BertTokenizer.from_pretrained(pretrained_model_name_or_path="/public/home/hpctest_xjtu/.cache/huggingface/hub/models--bert-base-uncased/snapshots/a265f773a47193eed794233aa2a0f0bb6d3eaa63", truncation_side=truncation_side)
         tokenizer.add_special_tokens({"bos_token": "[DEC]"})
         return tokenizer
 
@@ -45,14 +45,14 @@ class Blip2Base(BaseModel):
 
     @classmethod
     def init_Qformer(cls, num_query_token, vision_width, cross_attention_freq=2):
-        encoder_config = BertConfig.from_pretrained("bert-base-uncased")
+        encoder_config = BertConfig.from_pretrained(pretrained_model_name_or_path="/public/home/hpctest_xjtu/.cache/huggingface/hub/models--bert-base-uncased/snapshots/a265f773a47193eed794233aa2a0f0bb6d3eaa63")
         encoder_config.encoder_width = vision_width
         # insert cross-attention layer every other block
         encoder_config.add_cross_attention = True
         encoder_config.cross_attention_freq = cross_attention_freq
         encoder_config.query_length = num_query_token
         Qformer = BertLMHeadModel.from_pretrained(
-            "bert-base-uncased", config=encoder_config
+            "/public/home/hpctest_xjtu/.cache/huggingface/hub/models--bert-base-uncased/snapshots/a265f773a47193eed794233aa2a0f0bb6d3eaa63", config=encoder_config
         )
         query_tokens = nn.Parameter(
             torch.zeros(1, num_query_token, encoder_config.hidden_size)

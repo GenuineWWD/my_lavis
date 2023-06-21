@@ -147,29 +147,30 @@ class MetricLogger(object):
             if i % print_freq == 0 or i == len(iterable) - 1:
                 eta_seconds = iter_time.global_avg * (len(iterable) - i)
                 eta_string = str(datetime.timedelta(seconds=int(eta_seconds)))
-                if torch.cuda.is_available():
-                    print(
-                        log_msg.format(
-                            i,
-                            len(iterable),
-                            eta=eta_string,
-                            meters=str(self),
-                            time=str(iter_time),
-                            data=str(data_time),
-                            memory=torch.cuda.max_memory_allocated() / MB,
+                if dist.get_rank() == 0:
+                    if torch.cuda.is_available():
+                        print(
+                            log_msg.format(
+                                i,
+                                len(iterable),
+                                eta=eta_string,
+                                meters=str(self),
+                                time=str(iter_time),
+                                data=str(data_time),
+                                memory=torch.cuda.max_memory_allocated() / MB,
+                            )
                         )
-                    )
-                else:
-                    print(
-                        log_msg.format(
-                            i,
-                            len(iterable),
-                            eta=eta_string,
-                            meters=str(self),
-                            time=str(iter_time),
-                            data=str(data_time),
+                    else:
+                        print(
+                            log_msg.format(
+                                i,
+                                len(iterable),
+                                eta=eta_string,
+                                meters=str(self),
+                                time=str(iter_time),
+                                data=str(data_time),
+                            )
                         )
-                    )
             i += 1
             end = time.time()
         total_time = time.time() - start_time

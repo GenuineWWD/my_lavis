@@ -48,7 +48,7 @@ class Blip2OPT(Blip2Base):
         vit_precision="fp16",
         freeze_vit=True,
         num_query_token=32,
-        opt_model="facebook/opt-2.7b",
+        opt_model="/public/home/hpctest_xjtu/.cache/huggingface/hub/models--facebook--opt-2.7b/snapshots/397f71a473a150c00f0fe3fc4a2f78ff3ccaf82d",
         prompt="",
         max_txt_len=32,
         apply_lemmatizer=False,

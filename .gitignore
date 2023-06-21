@@ -154,3 +154,5 @@ debug*/
 *.gz
 
 cache/
+lavis_data/
+*.sh

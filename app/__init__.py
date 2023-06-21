@@ -23,4 +23,4 @@ def load_demo_image():
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-cache_root = "/export/home/.cache/lavis/"
+cache_root = "/public/home/hpctest_xjtu/mx/LAVIS/lavis_data"

@@ -8,11 +8,14 @@
 import datetime
 import functools
 import os
-
+import colorsys
+import datetime
 import torch
 import torch.distributed as dist
 import timm.models.hub as timm_hub
-
+import socket
+import subprocess
+import time
 
 def setup_for_distributed(is_master):
     """
@@ -54,40 +57,85 @@ def is_main_process():
     return get_rank() == 0
 
 
+def find_free_port():
+    s = socket.socket()
+    s.bind(('', 0))  # Bind to a free port provided by the host.
+    return s.getsockname()[1]  # Return the port number assigned.
+
+
 def init_distributed_mode(args):
-    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        if int(os.environ["RANK"]) == 0:
+            print('this task is not running on cluster!')
         args.rank = int(os.environ["RANK"])
-        args.world_size = int(os.environ["WORLD_SIZE"])
-        args.gpu = int(os.environ["LOCAL_RANK"])
-    elif "SLURM_PROCID" in os.environ:
-        args.rank = int(os.environ["SLURM_PROCID"])
-        args.gpu = args.rank % torch.cuda.device_count()
+        args.world_size = int(os.environ['WORLD_SIZE'])
+        args.gpu = int(os.environ['LOCAL_RANK'])
+        args.dist_url = 'env://'
+        os.environ['LOCAL_SIZE'] = str(torch.cuda.device_count())
+        # addr = socket.gethostname()
+        if os.environ.get('MASTER_ADDR_OVERRIDE', None):
+            os.environ['MASTER_ADDR'] = os.environ['MASTER_ADDR_OVERRIDE']
+        if os.environ.get('MASTER_PORT_OVERRIDE', None):
+            os.environ['MASTER_PORT'] = os.environ['MASTER_PORT_OVERRIDE']
+
+        addr = os.environ['MASTER_ADDR']
+        # addr = socket.gethostbyname(os.environ['MASTER_ADDR'])
+
+    elif 'SLURM_PROCID' in os.environ:
+        proc_id = int(os.environ['SLURM_PROCID'])
+        if proc_id == 0:
+            print('Init dist using slurm!')
+            print("Job Id is {} on {} ".format(os.environ["SLURM_JOBID"], os.environ['SLURM_NODELIST']))
+        ntasks = int(os.environ['SLURM_NTASKS'])
+        # node_list = os.environ['SLURM_NODELIST']
+        node_list = os.environ['SLURM_STEP_NODELIST']
+        # node_list = os.environ['SLURM_STEP_NODELIST']
+        num_gpus = torch.cuda.device_count()
+        addr = subprocess.getoutput('scontrol show hostname {} | head -n1'.format(node_list))
+        jobid = os.environ["SLURM_JOBID"]
+        hostfile = "dist_url_" + jobid + ".txt"
+        if proc_id == 0:
+            args.tcp_port = str(find_free_port())
+            print('write port {} to file: {} '.format(args.tcp_port, hostfile))
+            with open(hostfile, "w") as f:
+                f.write(args.tcp_port)
+        else:
+            print('read port from file: {}'.format(hostfile))
+            while not os.path.exists(hostfile):
+                time.sleep(1)
+            time.sleep(2)
+            with open(hostfile, "r") as f:
+                args.tcp_port = f.read()
+
+        os.environ['MASTER_PORT'] = str(args.tcp_port)
+        os.environ['MASTER_ADDR'] = addr
+        os.environ['WORLD_SIZE'] = str(ntasks)
+        os.environ['RANK'] = str(proc_id)
+        os.environ['LOCAL_RANK'] = str(proc_id % num_gpus)
+        os.environ['LOCAL_SIZE'] = str(num_gpus)
+        args.dist_url = 'env://'
+        args.world_size = ntasks
+        args.rank = proc_id
+        args.gpu = proc_id % num_gpus
     else:
-        print("Not using distributed mode")
+        print('Not using distributed mode')
         args.distributed = False
         return
 
     args.distributed = True
 
     torch.cuda.set_device(args.gpu)
-    args.dist_backend = "nccl"
-    print(
-        "| distributed init (rank {}, world {}): {}".format(
-            args.rank, args.world_size, args.dist_url
-        ),
-        flush=True,
-    )
-    torch.distributed.init_process_group(
-        backend=args.dist_backend,
-        init_method=args.dist_url,
-        world_size=args.world_size,
-        rank=args.rank,
-        timeout=datetime.timedelta(
-            days=365
-        ),  # allow auto-downloading and de-compressing
-    )
+    args.dist_backend = 'nccl'
+    print('rank: {} addr: {}  port: {}'.format(args.rank, addr, os.environ['MASTER_PORT']))
+    print(f' rank {proc_id} world size: {args.world_size}, local rank: {args.gpu}, local size: {os.environ["LOCAL_SIZE"]}')
+    # torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url, world_size=args.world_size, rank=args.rank)
+    # import pdb; pdb.set_trace()
+    dist.init_process_group(backend="nccl")
     torch.distributed.barrier()
-    setup_for_distributed(args.rank == 0)
+    if 'SLURM_PROCID' in os.environ and args.rank == 0:
+        if os.path.isfile(hostfile):
+            os.remove(hostfile)
+            # init method
 
 
 def get_dist_info():
