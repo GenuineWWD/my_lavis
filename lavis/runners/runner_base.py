@@ -11,29 +11,45 @@ import logging
 import os
 import time
 from pathlib import Path
-
+import deepspeed
 import torch
 import torch.distributed as dist
 import webdataset as wds
-from lavis.common.dist_utils import (
-    download_cached_file,
-    get_rank,
-    get_world_size,
-    is_main_process,
-    main_process,
-)
-from lavis.common.registry import registry
-from lavis.common.utils import is_url
-from lavis.datasets.data_utils import concat_datasets, reorg_datasets_by_split
-from lavis.datasets.datasets.dataloader_utils import (
-    IterLoader,
-    MultiIterLoader,
-    PrefetchLoader,
-)
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 from torch.utils.data.dataset import ChainDataset
 
+from lavis.common.dist_utils import (download_cached_file, get_rank,
+                                     get_world_size, is_main_process,
+                                     main_process)
+from lavis.common.registry import registry
+from lavis.common.utils import is_url
+from lavis.datasets.data_utils import concat_datasets, reorg_datasets_by_split
+from lavis.datasets.datasets.dataloader_utils import (IterLoader,
+                                                      MultiIterLoader,
+                                                      PrefetchLoader)
+
+ds_config ={
+  "train_batch_size": 64,
+  "gradient_accumulation_steps": 1,
+  "steps_per_print": 1,
+  "zero_optimization": {
+    "stage": 3,
+    "reduce_bucket_size": 7000000,
+    "allgather_bucket_size": 7000000,
+    "reduce_scatter": True,
+  },
+  "gradient_clipping": 0.5,
+  "fp16": {
+    "enabled": True,
+    "fp16_master_weights_and_grads": False,
+    "loss_scale": 0,
+    "loss_scale_window": 50,
+    "hysteresis": 2,
+    "min_loss_scale": 32.0,  # for the first 10k iters
+    "initial_scale_power": 13
+  }
+}
 
 @registry.register_runner("runner_base")
 class RunnerBase:
@@ -61,6 +77,14 @@ class RunnerBase:
         self._lr_sched = None
 
         self.start_epoch = 0
+        
+        #! prepare deepspeed model , deepspeed optim, deepspeed lr_sch and dataloader. Send them to self.train
+        #! However, loss.backward() and optim.step() should be reproduced in self.task.train() , not here and much deeper
+        
+        self.ds_model = None
+        self.ds_optim = None
+        self.ds_lr_sch = None
+        self.ds_dataloader = None
 
         # self.setup_seeds()
         self.setup_output_dir()
@@ -138,8 +162,8 @@ class RunnerBase:
 
         return self._scaler
 
-    @property
-    def lr_scheduler(self):
+
+    def get_lr_scheduler(self):
         """
         A property to get and create learning rate scheduler by split just in need.
         """
@@ -170,8 +194,8 @@ class RunnerBase:
 
         return self._lr_sched
 
-    @property
-    def dataloaders(self) -> dict:
+
+    def process_datasets(self):
         """
         A property to get and create dataloaders by split just in need.
 
@@ -237,37 +261,39 @@ class RunnerBase:
                     )
 
             # create dataloaders
-            split_names = sorted(self.datasets.keys())
+            # split_names = sorted(self.datasets.keys())
 
-            datasets = [self.datasets[split] for split in split_names]
-            is_trains = [split in self.train_splits for split in split_names]
+            # datasets = [self.datasets[split] for split in split_names]
+            # is_trains = [split in self.train_splits for split in split_names]
 
-            batch_sizes = [
-                self.config.run_cfg.batch_size_train
-                if split == "train"
-                else self.config.run_cfg.batch_size_eval
-                for split in split_names
-            ]
+            # batch_sizes = [
+            #     self.config.run_cfg.batch_size_train
+            #     if split == "train"
+            #     else self.config.run_cfg.batch_size_eval
+            #     for split in split_names
+            # ]
 
-            collate_fns = []
-            for dataset in datasets:
-                if isinstance(dataset, tuple) or isinstance(dataset, list):
-                    collate_fns.append([getattr(d, "collater", None) for d in dataset])
-                else:
-                    collate_fns.append(getattr(dataset, "collater", None))
+            # collate_fns = []
+            # for dataset in datasets:
+            #     if isinstance(dataset, tuple) or isinstance(dataset, list):
+            #         collate_fns.append([getattr(d, "collater", None) for d in dataset])
+            #     else:
+            #         collate_fns.append(getattr(dataset, "collater", None))
 
-            dataloaders = self.create_loaders(
-                datasets=datasets,
-                num_workers=self.config.run_cfg.num_workers,
-                batch_sizes=batch_sizes,
-                is_trains=is_trains,
-                collate_fns=collate_fns,
-                dataset_ratios=dataset_ratios,
-            )
+            # dataloaders = self.create_loaders(
+            #     datasets=datasets,
+            #     num_workers=self.config.run_cfg.num_workers,
+            #     batch_sizes=batch_sizes,
+            #     is_trains=is_trains,
+            #     collate_fns=collate_fns,
+            #     dataset_ratios=dataset_ratios,
+            # )
 
-            self._dataloaders = {k: v for k, v in zip(split_names, dataloaders)}
+            # self._dataloaders = {k: v for k, v in zip(split_names, dataloaders)}
 
-        return self._dataloaders
+        #! just return dataset for deepspeed to create engine
+
+        return datasets
 
     @property
     def cuda_enabled(self):
@@ -354,12 +380,26 @@ class RunnerBase:
         self.result_dir = result_dir
         self.output_dir = output_dir
 
+    def prepare_ds(self):
+        #! This function is used to prepare things needed for deepspeed
+        self.datasets = self.process_datasets()
+        self._lr_sched = self.get_lr_scheduler()
+        
+        model_engine, optimizer, train_dataloader, lr_scheduler_temp = deepspeed.initialize(model=self._model, optimizer=self._optimizer, config=ds_config, training_data=self.datasets["train"], lr_scheduler=self._lr_sched)
+        self.ds_model = model_engine
+        self.ds_optim = optimizer
+        self.ds_lr_sch = lr_scheduler_temp
+        self.ds_dataloader = train_dataloader
+
+
     def train(self):
         start_time = time.time()
         best_agg_metric = 0
         best_epoch = 0
 
         self.log_config()
+        #! call prepare_ds function to prepare ds_model and so on.
+        self.prepare_ds()
 
         # resume from checkpoint if specified
         if not self.evaluate_only and self.resume_ckpt_path is not None:
@@ -428,13 +468,14 @@ class RunnerBase:
         # train
         self.model.train()
 
+        #! some elements has been replaced by deepspeed elements
         return self.task.train_epoch(
             epoch=epoch,
-            model=self.model,
-            data_loader=self.train_loader,
-            optimizer=self.optimizer,
+            model = self.ds_model,
+            data_loader = self.ds_dataloader,
+            optimizer = self.ds_optim,
             scaler=self.scaler,
-            lr_scheduler=self.lr_scheduler,
+            lr_scheduler = self.ds_lr_sch,
             cuda_enabled=self.cuda_enabled,
             log_freq=self.log_freq,
             accum_grad_iters=self.accum_grad_iters,

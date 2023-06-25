@@ -7,5 +7,6 @@
 
 from lavis.runners.runner_base import RunnerBase
 from lavis.runners.runner_iter import RunnerIter
+from lavis.runners.ds_config import ds_config
 
-__all__ = ["RunnerBase", "RunnerIter"]
+__all__ = ["RunnerBase", "RunnerIter", "ds_config"]

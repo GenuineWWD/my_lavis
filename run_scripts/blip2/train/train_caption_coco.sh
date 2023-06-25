@@ -20,6 +20,8 @@ partition=xahdtest
 time=$(date "+%Y%m%d-%H%M%S")
 
 set -x 
-srun -p ${partition} -n$ndcus --gres=dcu:${GPUS_PER_NODE} -o $output/$jobname/${jobname}_${time}.log  --job-name=${jobname} \
+srun -p ${partition} -n$ndcus --gres=dcu:${GPUS_PER_NODE}  --job-name=${jobname}  \
 --cpus-per-task=8  --kill-on-bad-exit=1 --ntasks-per-node=${GPUS_PER_NODE} \
 python  train.py --cfg-path lavis/projects/blip2/train/caption_coco_ft.yaml
+
+#  -o $output/$jobname/${jobname}_${time}.log

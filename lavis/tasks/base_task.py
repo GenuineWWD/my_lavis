@@ -61,6 +61,7 @@ class BaseTask:
         return datasets
 
     def train_step(self, model, samples):
+        #! reproduce the forward required by deepspeed
         output = model(samples)
         loss_dict = {}
         for k,v in output.items():
@@ -201,8 +202,8 @@ class BaseTask:
             # if using iter-based runner, we stop after iters_per_epoch iterations.
             if i >= iters_per_epoch:
                 break
-
-            samples = next(data_loader)
+            
+            samples = next(iter(data_loader))
 
             samples = prepare_sample(samples, cuda_enabled=cuda_enabled)
             samples.update(
@@ -215,24 +216,30 @@ class BaseTask:
 
             lr_scheduler.step(cur_epoch=inner_epoch, cur_step=i)
 
-            with torch.cuda.amp.autocast(enabled=use_amp):
+            #! Disable the autocast 
+            with torch.cuda.amp.autocast(enabled=False):
                 loss, loss_dict = self.train_step(model=model, samples=samples)
                 loss /= accum_grad_iters #TODO: not affect loss_dict values for logging
 
             # after_train_step()
-            if use_amp:
-                scaler.scale(loss).backward()
-            else:
-                loss.backward()
+            # if use_amp:
+            #     scaler.scale(loss).backward()
+            # else:
+            #     loss.backward()
+            #! Use deepspped backward method
+            model.backward(loss)
 
             # update gradients every accum_grad_iters iterations
-            if (i + 1) % accum_grad_iters == 0:
-                if use_amp:
-                    scaler.step(optimizer)
-                    scaler.update()                     
-                else:    
-                    optimizer.step()
-                optimizer.zero_grad()
+            # if (i + 1) % accum_grad_iters == 0:
+            #     if use_amp:
+            #         scaler.step(optimizer)
+            #         scaler.update()                     
+            #     else:    
+            #         optimizer.step()
+            #! autocast has been disabled here and just use the deepspeed update method
+
+            model.step()
+            optimizer.zero_grad()
 
             metric_logger.update(**loss_dict)
             metric_logger.update(lr=optimizer.param_groups[0]["lr"])

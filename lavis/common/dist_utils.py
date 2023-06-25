@@ -15,6 +15,7 @@ import torch.distributed as dist
 import timm.models.hub as timm_hub
 import socket
 import subprocess
+import deepspeed
 import time
 
 def setup_for_distributed(is_master):
@@ -130,7 +131,7 @@ def init_distributed_mode(args):
     print(f' rank {proc_id} world size: {args.world_size}, local rank: {args.gpu}, local size: {os.environ["LOCAL_SIZE"]}')
     # torch.distributed.init_process_group(backend=args.dist_backend, init_method=args.dist_url, world_size=args.world_size, rank=args.rank)
     # import pdb; pdb.set_trace()
-    dist.init_process_group(backend="nccl")
+    deepspeed.init_distributed(dist_backend=args.dist_backend,  init_method=args.dist_url)
     torch.distributed.barrier()
     if 'SLURM_PROCID' in os.environ and args.rank == 0:
         if os.path.isfile(hostfile):
