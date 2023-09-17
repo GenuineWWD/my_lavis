@@ -5,14 +5,14 @@
  For full license text, see the LICENSE file in the repo root or https://opensource.org/licenses/BSD-3-Clause
 """
 
+import deepspeed
 import torch
-from lavis.common.registry import registry
+import torch.distributed as dist
 
+from lavis.common.registry import registry
 from lavis.models.blip_models.blip import BlipBase
-from lavis.models.blip_models.blip_outputs import (
-    BlipOutput,
-    BlipIntermediateOutput,
-)
+from lavis.models.blip_models.blip_outputs import (BlipIntermediateOutput,
+                                                   BlipOutput)
 from lavis.models.med import XBertLMHeadDecoder
 from lavis.models.vit import VisionTransformerEncoder
 
@@ -40,19 +40,19 @@ class BlipCaption(BlipBase):
     def __init__(self, image_encoder, text_decoder, prompt=None, max_txt_len=40):
         super().__init__()
 
-        self.tokenizer = self.init_tokenizer()
+        self.tokenizer = self.init_tokenizer() #* Use "bert-base-uncased" default and add [DEC] and [ENC] token
 
         self.visual_encoder = image_encoder
-        self.text_decoder = text_decoder
+        self.text_decoder = text_decoder #* XBertLMHeadDecoder
 
-        self.prompt = prompt
+        self.prompt = prompt #* "a picture of "
         self.prompt_length = len(self.tokenizer(self.prompt).input_ids) - 1
 
         self.max_txt_len = max_txt_len
 
     def forward_encoder(self, samples):
         image_embeds = self.visual_encoder.forward_features(samples["image"])
-        return image_embeds
+        return image_embeds #* return the features of [bsz, 577, 768]. 577 = (384^2/(16^2)) + 1
 
     def forward_decoder(self, samples, image_embeds):
         # prepare inputs for forwarding decoder
@@ -70,7 +70,7 @@ class BlipCaption(BlipBase):
         decoder_targets = text.input_ids.masked_fill(
             text.input_ids == self.tokenizer.pad_token_id, -100
         )
-        decoder_targets[:, : self.prompt_length] = -100
+        decoder_targets[:, : self.prompt_length] = -100 #* Mask the content of prompts
 
         # forward decoder
         image_atts = torch.ones(image_embeds.size()[:-1], dtype=torch.long).to(
@@ -119,27 +119,31 @@ class BlipCaption(BlipBase):
         torch.Size([1, 13])
         ```"""
 
-        image_embeds = self.forward_encoder(samples)
-        decoder_output, decoder_targets = self.forward_decoder(samples, image_embeds)
+        if "text_input" in samples.keys():
+            image_embeds = self.forward_encoder(samples)
+            decoder_output, decoder_targets = self.forward_decoder(samples, image_embeds)
 
-        # return decoder_out
-        return BlipOutput(
-            loss=decoder_output.loss,
-            loss_lm=decoder_output.loss,
-            intermediate_output=BlipIntermediateOutput(
-                image_embeds=image_embeds,
-                decoder_output=decoder_output,
-                decoder_labels=decoder_targets,
-            ),
-        )
+            # return decoder_out
+            return BlipOutput(
+                loss=decoder_output.loss,
+                loss_lm=decoder_output.loss,
+                intermediate_output=BlipIntermediateOutput(
+                    image_embeds=image_embeds,
+                    decoder_output=decoder_output,
+                    decoder_labels=decoder_targets,
+                ),
+            )
+        else:
+            captions = self.generate(samples=samples)
+            return captions
 
     def generate(
         self,
         samples,
         use_nucleus_sampling=False,
         num_beams=3,
-        max_length=30,
-        min_length=10,
+        max_length=20,
+        min_length=5,
         top_p=0.9,
         repetition_penalty=1.0,
         num_captions=1,

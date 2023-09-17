@@ -62,17 +62,17 @@ class LinearWarmupCosineLRScheduler:
         min_lr,
         init_lr,
         warmup_steps=0,
-        warmup_start_lr=-1,
+        warmup_start_lr=-1, #* This is warmup_lr in the config , actually ! Which bitch set this ?
         **kwargs
     ):
         self.optimizer = optimizer
 
         self.max_epoch = max_epoch
-        self.min_lr = min_lr
+        self.min_lr = min_lr #* for blip2, min_lr = 0
 
-        self.init_lr = init_lr
+        self.init_lr = init_lr #* for blip2, init_lr = 1e-5
         self.warmup_steps = warmup_steps
-        self.warmup_start_lr = warmup_start_lr if warmup_start_lr >= 0 else init_lr
+        self.warmup_start_lr = warmup_start_lr if warmup_start_lr >= 0 else init_lr #* for blip2, self.warmup_start_lr = 1e-8
 
     def step(self, cur_epoch, cur_step):
         # assuming the warmup iters less than one epoch
@@ -109,6 +109,7 @@ def warmup_lr_schedule(optimizer, step, max_step, init_lr, max_lr):
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
 
+    #* for blip2, init_lr = self.init_lr = 1e-5; max_lr = self.init_lr = 1e-5
 
 def step_lr_schedule(optimizer, epoch, init_lr, min_lr, decay_rate):
     """Decay the learning rate"""

@@ -12,6 +12,7 @@ import random
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
+import faulthandler; faulthandler.enable()
 
 import lavis.tasks as tasks
 from lavis.common.config import Config

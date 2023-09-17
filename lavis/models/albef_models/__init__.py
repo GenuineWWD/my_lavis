@@ -185,6 +185,8 @@ def compute_sim_matrix(model, data_loader, **kwargs):
         )
         score = model.itm_head(output.last_hidden_state[:, 0, :])[:, 1]
         score_matrix_t2i[start + i, topk_idx] = score + topk_sim
+    
+    print(f"The value of score_matrix is {score_matrix_t2i}")
 
     if dist_utils.is_dist_avail_and_initialized():
         dist.barrier()

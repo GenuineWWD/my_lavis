@@ -7,4 +7,4 @@ env:
   # For default users
   # cache_root: "cache"
   # For internal use with persistent storage
-  cache_root: "/public/home/hpctest_xjtu/mx/LAVIS/lavis_data"
+  cache_root: "/public/home/hpctest_xjtu/mx/lavis_data"

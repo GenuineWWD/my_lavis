@@ -9,8 +9,13 @@ import logging
 import os
 
 import torch
+import math
 import torch.distributed as dist
-from lavis.common.dist_utils import get_rank, get_world_size, is_main_process, is_dist_avail_and_initialized
+from torch.utils.tensorboard import SummaryWriter
+
+from lavis.common.dist_utils import (get_rank, get_world_size,
+                                     is_dist_avail_and_initialized,
+                                     is_main_process)
 from lavis.common.logger import MetricLogger, SmoothedValue
 from lavis.common.registry import registry
 from lavis.datasets.data_utils import prepare_sample
@@ -21,6 +26,7 @@ class BaseTask:
         super().__init__()
 
         self.inst_id_key = "instance_id"
+        self.config = None #* add config to this class for the method to use config.max_lr to update lr_schedule
 
     @classmethod
     def setup_task(cls, **kwargs):
@@ -28,6 +34,7 @@ class BaseTask:
 
     def build_model(self, cfg):
         model_config = cfg.model_cfg
+        self.config = cfg
 
         model_cls = registry.get_model_class(model_config.arch)
         return model_cls.from_config(model_config)
@@ -73,7 +80,7 @@ class BaseTask:
         raise NotImplementedError
 
     def before_evaluation(self, model, dataset, **kwargs):
-        model.before_evaluation(dataset=dataset, task_type=type(self))
+        model.module.before_evaluation(dataset=dataset, task_type=type(self))
 
     def after_evaluation(self, **kwargs):
         pass
@@ -198,13 +205,27 @@ class BaseTask:
             inner_epoch = start_iters // iters_per_epoch
             header = header + "; inner epoch [{}]".format(inner_epoch)
 
+        iter_loader = iter(data_loader)
+
+        ckpt_path = "ckpt/" + self.config.run_cfg.task + str(self.config.config.datasets.keys())
+
         for i in metric_logger.log_every(range(iters_per_epoch), log_freq, header):
             # if using iter-based runner, we stop after iters_per_epoch iterations.
+            # if i % 500 == 0:
+            #     model.save_checkpoint(ckpt_path, i)
+
             if i >= iters_per_epoch:
                 break
             
-            samples = next(iter(data_loader))
+            # if epoch == 0: #* on the first epoch , iter-based warmup lr_schedule will be called, so update lr here 
 
+            #     for param_group in optimizer.param_groups:
+            #         param_group["lr"] = min(self.config.run_cfg.init_lr , 
+            #                                 self.config.run_cfg.warmup_lr + 
+            #                                 (self.config.run_cfg.init_lr - self.config.run_cfg.warmup_lr) * i / max(self.config.run_cfg.warmup_steps, 1))
+        
+            samples = next(iter_loader)
+            
             samples = prepare_sample(samples, cuda_enabled=cuda_enabled)
             samples.update(
                 {
@@ -214,13 +235,18 @@ class BaseTask:
                 }
             )
 
-            lr_scheduler.step(cur_epoch=inner_epoch, cur_step=i)
+            # lr_scheduler.step() #* Lr sche will be done by deepspeed auto, this code is not needed
 
             #! Disable the autocast 
             with torch.cuda.amp.autocast(enabled=False):
                 loss, loss_dict = self.train_step(model=model, samples=samples)
                 loss /= accum_grad_iters #TODO: not affect loss_dict values for logging
-
+                
+                # if dist.get_rank() == 0 and i % log_freq == 0:
+                #     for key in loss_dict:
+                #         writer.add_scalar(tag=f"train_loss/{key}", scalar_value=loss_dict[key],
+                #           global_step=i)
+                    
             # after_train_step()
             # if use_amp:
             #     scaler.scale(loss).backward()
@@ -239,8 +265,7 @@ class BaseTask:
             #! autocast has been disabled here and just use the deepspeed update method
 
             model.step()
-            optimizer.zero_grad()
-
+            
             metric_logger.update(**loss_dict)
             metric_logger.update(lr=optimizer.param_groups[0]["lr"])
 

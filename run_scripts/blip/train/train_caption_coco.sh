@@ -15,7 +15,8 @@ echo The output dict is ${output}
 
 mkdir -p ${output}/${jobname}
 
-partition=xahdtest
+# partition=xahdtest
+partition=xahdnormal
 
 time=$(date "+%Y%m%d-%H%M%S")
 

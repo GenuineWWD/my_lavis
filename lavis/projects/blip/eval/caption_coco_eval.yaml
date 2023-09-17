@@ -29,6 +29,7 @@ run:
   num_beams: 3
 
   seed: 42
+  max_epoch: 1
   output_dir: "output/BLIP/Caption_coco"
 
   evaluate: True

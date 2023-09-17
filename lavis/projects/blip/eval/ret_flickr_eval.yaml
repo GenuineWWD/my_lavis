@@ -21,11 +21,12 @@ run:
   task: retrieval
 
   # dataloading
-  num_workers: 4
+  num_workers: 8
   batch_size_train: 32
   batch_size_eval: 64
 
   test_splits: ["test"]
+  max_epoch: 1
 
   # distribution
   device: "cuda"

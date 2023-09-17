@@ -33,6 +33,7 @@ run:
   train_splits: ["train"]
   valid_splits: ["val"]
   test_splits: ["test"]
+  max_epoch: 1
 
   # distribution
   device: "cuda"

@@ -156,3 +156,6 @@ debug*/
 cache/
 lavis_data/
 *.sh
+ckpt/*
+ckpt_blip
+ckpt_blip_iter

@@ -8,7 +8,8 @@ model:
   load_finetuned: True
 
   pretrained: "https://storage.googleapis.com/sfr-vision-language-research/LAVIS/models/BLIP2/blip2_pretrained_opt2.7b.pth"
-  finetuned: "https://storage.googleapis.com/sfr-vision-language-research/LAVIS/models/BLIP2/blip2_caption_opt2.7b.pth"
+  # finetuned: "https://storage.googleapis.com/sfr-vision-language-research/LAVIS/models/BLIP2/blip2_caption_opt2.7b.pth"
+  finetuned : "https://storage.googleapis.com/sfr-vision-language-research/LAVIS/models/BLIP2/blip2_caption_opt2.7b.pth"
 
   # vit encoder
   image_size: 364
@@ -21,7 +22,7 @@ model:
   num_query_token: 32
 
   # OPT
-  opt_model: "/public/home/hpctest_xjtu/.cache/huggingface/hub/models--facebook--opt-2.7b/snapshots/397f71a473a150c00f0fe3fc4a2f78ff3ccaf82d"
+  opt_model: "/public/home/hpctest_xjtu/data/hf_home/opt-2.7b"
 
   # generation configs
   prompt: "a photo of"

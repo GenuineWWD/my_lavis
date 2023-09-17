@@ -91,6 +91,8 @@ class BlipRetrieval(BlipBase, MomentumDistilationMixin, SharedQueueMixin):
             [self.text_proj, self.text_proj_m],
         ]
         self.copy_params()
+        
+        self.register_external_param()
 
         # create the queue
         self.register_buffer("image_queue", torch.randn(embed_dim, queue_size))

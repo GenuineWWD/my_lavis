@@ -7,6 +7,7 @@
 
 import logging
 import os
+import deepspeed
 
 import numpy as np
 import torch
@@ -180,6 +181,19 @@ class MomentumDistilationMixin:
                 param_m.data = param_m.data * self.momentum + param.data * (
                     1.0 - self.momentum
                 )
+
+    @torch.no_grad()
+    def register_external_param(self):
+        '''
+        Register the parameters form self.model_pairs as external parameters to used
+        when _momentum_update()
+        '''
+        for model_pair in self.model_pairs:
+            for param, param_m in zip(
+                model_pair[0].parameters(), model_pair[1].parameters()
+            ):  
+                deepspeed.zero.register_external_parameter(self, param)
+                deepspeed.zero.register_external_parameter(self, param_m)
 
 
 class GatherLayer(torch.autograd.Function):

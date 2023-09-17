@@ -34,7 +34,7 @@ run:
   max_epoch: 5
   batch_size_train: 2
   batch_size_eval: 2
-  num_workers: 4
+  num_workers: 8
 
   max_len: 20
   min_len: 5

@@ -8,6 +8,7 @@ model:
   load_finetuned: True
 
   finetuned: "https://storage.googleapis.com/sfr-vision-language-research/LAVIS/models/BLIP/blip_flickr_retrieval.pth"
+  # finetuned: "/public/home/hpctest_xjtu/mx/LAVIS/ckpt/retrievaldict_keys(['flickr30k'])/blip_ret_flickr_epo_5.pth"
   pretrained: "https://storage.googleapis.com/sfr-vision-language-research/BLIP/models/model_base_capfilt_large.pth"
 
   queue_size: 57600

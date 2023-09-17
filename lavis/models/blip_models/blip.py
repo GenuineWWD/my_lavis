@@ -25,7 +25,7 @@ class BlipBase(BaseModel):
         
     @classmethod
     def init_tokenizer(cls):
-        tokenizer = BertTokenizer.from_pretrained(pretrained_model_name_or_path="/public/home/hpctest_xjtu/.cache/huggingface/hub/models--bert-base-uncased/snapshots/a265f773a47193eed794233aa2a0f0bb6d3eaa63")
+        tokenizer = BertTokenizer.from_pretrained("/public/home/hpctest_xjtu/data/hf_home/bert-base-uncased")
         tokenizer.add_special_tokens({"bos_token": "[DEC]"})
         tokenizer.add_special_tokens({"additional_special_tokens": ["[ENC]"]})
         tokenizer.enc_token_id = tokenizer.additional_special_tokens_ids[0]

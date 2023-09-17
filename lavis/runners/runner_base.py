@@ -11,7 +11,9 @@ import logging
 import os
 import time
 from pathlib import Path
+import math
 import deepspeed
+import copy
 import torch
 import torch.distributed as dist
 import webdataset as wds
@@ -28,28 +30,9 @@ from lavis.datasets.data_utils import concat_datasets, reorg_datasets_by_split
 from lavis.datasets.datasets.dataloader_utils import (IterLoader,
                                                       MultiIterLoader,
                                                       PrefetchLoader)
+from lavis.runners.ds_config import ds_config, test_ds_config
+from transformers.optimization import get_cosine_schedule_with_warmup
 
-ds_config ={
-  "train_batch_size": 64,
-  "gradient_accumulation_steps": 1,
-  "steps_per_print": 1,
-  "zero_optimization": {
-    "stage": 3,
-    "reduce_bucket_size": 7000000,
-    "allgather_bucket_size": 7000000,
-    "reduce_scatter": True,
-  },
-  "gradient_clipping": 0.5,
-  "fp16": {
-    "enabled": True,
-    "fp16_master_weights_and_grads": False,
-    "loss_scale": 0,
-    "loss_scale_window": 50,
-    "hysteresis": 2,
-    "min_loss_scale": 32.0,  # for the first 10k iters
-    "initial_scale_power": 13
-  }
-}
 
 @registry.register_runner("runner_base")
 class RunnerBase:
@@ -77,6 +60,7 @@ class RunnerBase:
         self._lr_sched = None
 
         self.start_epoch = 0
+        # self.max_epoch = self.config.get_config()["run"]["max_epoch"]
         
         #! prepare deepspeed model , deepspeed optim, deepspeed lr_sch and dataloader. Send them to self.train
         #! However, loss.backward() and optim.step() should be reproduced in self.task.train() , not here and much deeper
@@ -85,9 +69,14 @@ class RunnerBase:
         self.ds_optim = None
         self.ds_lr_sch = None
         self.ds_dataloader = None
+        self.ds_test_dataloader = None
+        self.ds_model_test = None
 
         # self.setup_seeds()
         self.setup_output_dir()
+        
+        # ! call prepare_ds function to prepare ds_model and so on.
+        self.prepare_ds()
 
     @property
     def device(self):
@@ -100,25 +89,25 @@ class RunnerBase:
     def use_distributed(self):
         return self.config.run_cfg.distributed
 
-    @property
-    def model(self):
-        """
-        A property to get the DDP-wrapped model on the device.
-        """
-        # move model to device
-        if self._model.device != self.device:
-            self._model = self._model.to(self.device)
 
-            # distributed training wrapper
-            if self.use_distributed:
-                if self._wrapped_model is None:
-                    self._wrapped_model = DDP(
-                        self._model, device_ids=[self.config.run_cfg.gpu]
-                    )
-            else:
-                self._wrapped_model = self._model
+    # def model(self):
+    #     """
+    #     A property to get the DDP-wrapped model on the device.
+    #     """
+    #     # move model to device
+    #     if self._model.device != self.device:
+    #         self._model = self._model.to(self.device)
 
-        return self._wrapped_model
+    #         # distributed training wrapper
+    #         if self.use_distributed:
+    #             if self._wrapped_model is None:
+    #                 self._wrapped_model = DDP(
+    #                     self._model, device_ids=[self.config.run_cfg.gpu]
+    #                 )
+    #         else:
+    #             self._wrapped_model = self._model
+
+    #     return self._wrapped_model
 
     @property
     def optimizer(self):
@@ -126,7 +115,7 @@ class RunnerBase:
         if self._optimizer is None:
             num_parameters = 0
             p_wd, p_non_wd = [], []
-            for n, p in self.model.named_parameters():
+            for n, p in self._model.named_parameters():
                 if not p.requires_grad:
                     continue  # frozen weights
                 if p.ndim < 2 or "bias" in n or "ln" in n or "bn" in n:
@@ -260,37 +249,6 @@ class RunnerBase:
                         )
                     )
 
-            # create dataloaders
-            # split_names = sorted(self.datasets.keys())
-
-            # datasets = [self.datasets[split] for split in split_names]
-            # is_trains = [split in self.train_splits for split in split_names]
-
-            # batch_sizes = [
-            #     self.config.run_cfg.batch_size_train
-            #     if split == "train"
-            #     else self.config.run_cfg.batch_size_eval
-            #     for split in split_names
-            # ]
-
-            # collate_fns = []
-            # for dataset in datasets:
-            #     if isinstance(dataset, tuple) or isinstance(dataset, list):
-            #         collate_fns.append([getattr(d, "collater", None) for d in dataset])
-            #     else:
-            #         collate_fns.append(getattr(dataset, "collater", None))
-
-            # dataloaders = self.create_loaders(
-            #     datasets=datasets,
-            #     num_workers=self.config.run_cfg.num_workers,
-            #     batch_sizes=batch_sizes,
-            #     is_trains=is_trains,
-            #     collate_fns=collate_fns,
-            #     dataset_ratios=dataset_ratios,
-            # )
-
-            # self._dataloaders = {k: v for k, v in zip(split_names, dataloaders)}
-
         #! just return dataset for deepspeed to create engine
 
         return datasets
@@ -383,13 +341,33 @@ class RunnerBase:
     def prepare_ds(self):
         #! This function is used to prepare things needed for deepspeed
         self.datasets = self.process_datasets()
-        self._lr_sched = self.get_lr_scheduler()
         
-        model_engine, optimizer, train_dataloader, lr_scheduler_temp = deepspeed.initialize(model=self._model, optimizer=self._optimizer, config=ds_config, training_data=self.datasets["train"], lr_scheduler=self._lr_sched)
-        self.ds_model = model_engine
-        self.ds_optim = optimizer
-        self.ds_lr_sch = lr_scheduler_temp
-        self.ds_dataloader = train_dataloader
+        # self._model_copy = copy.deepcopy(self._model)
+
+        if  self.config.get_config()["run"]["evaluate"] != True:
+            num_update_steps_per_epoch = math.ceil(len(self.datasets["train"]) / ds_config["gradient_accumulation_steps"] / ds_config["train_batch_size"])
+
+            self._lr_sched = get_cosine_schedule_with_warmup(optimizer=self.optimizer, num_warmup_steps=0, num_training_steps=num_update_steps_per_epoch*5-1)
+            #* Here the -1 for num_training_steps is for BLIP, whose first epoch is lr=1e-5 without degree.
+            
+            model_engine, optimizer, train_dataloader, lr_scheduler_temp = deepspeed.initialize(model=self._model, config=ds_config, training_data=self.datasets["train"], optimizer=self._optimizer)
+            # model_engine_test, _, test_dataloader, _ = deepspeed.initialize(model=self._model_copy, config=test_ds_config,training_data=self.datasets["val"]) 
+            
+            self.ds_model = model_engine
+            self.ds_optim = optimizer
+            self.ds_lr_sch = lr_scheduler_temp
+            self.ds_dataloader = train_dataloader
+            # self.ds_test_dataloader = test_dataloader
+            # self.ds_model_test = model_engine_test
+
+        else:
+            model_engine_test, _, test_dataloader, _ = deepspeed.initialize(model=self._model, config=test_ds_config, training_data=self.datasets["val"])
+
+            sampler = torch.utils.data.sampler.SequentialSampler(self.datasets['test'])
+            test_dataloader = DataLoader(self.datasets['test'], sampler=sampler, shuffle=False, batch_size=64)
+
+            self.ds_test_dataloader = test_dataloader
+            self.ds_model_test = model_engine_test
 
 
     def train(self):
@@ -398,8 +376,6 @@ class RunnerBase:
         best_epoch = 0
 
         self.log_config()
-        #! call prepare_ds function to prepare ds_model and so on.
-        self.prepare_ds()
 
         # resume from checkpoint if specified
         if not self.evaluate_only and self.resume_ckpt_path is not None:
@@ -413,27 +389,20 @@ class RunnerBase:
                 self.log_stats(split_name="train", stats=train_stats)
 
             # evaluation phase
-            if len(self.valid_splits) > 0:
-                for split_name in self.valid_splits:
-                    logging.info("Evaluating on {}.".format(split_name))
+            # if len(self.valid_splits) > 0:
+            #     for split_name in self.valid_splits:
+            #         logging.info("Evaluating on {}.".format(split_name))
 
-                    val_log = self.eval_epoch(
-                        split_name=split_name, cur_epoch=cur_epoch
-                    )
-                    if val_log is not None:
-                        if is_main_process():
-                            assert (
-                                "agg_metrics" in val_log
-                            ), "No agg_metrics found in validation log."
+            #         val_log = self.eval_epoch(
+            #             split_name=split_name, cur_epoch=cur_epoch
+            #         )
 
-                            agg_metrics = val_log["agg_metrics"]
-                            if agg_metrics > best_agg_metric and split_name == "val":
-                                best_epoch, best_agg_metric = cur_epoch, agg_metrics
+            #         # TODO : The dir of ckpt should be relative to the name of expriment
 
-                                self._save_checkpoint(cur_epoch, is_best=True)
+                ckpt_path = "ckpt/" + self.config.run_cfg.task + str(self.config.config.datasets.keys())
+                self.ds_model.save_checkpoint(ckpt_path, cur_epoch)
 
-                            val_log.update({"best_epoch": best_epoch})
-                            self.log_stats(val_log, split_name)
+                # self.log_stats(val_log, split_name)
 
             else:
                 # if no validation split is provided, we just save the checkpoint at the end of each epoch.
@@ -442,8 +411,6 @@ class RunnerBase:
 
             if self.evaluate_only:
                 break
-
-            dist.barrier()
 
         # testing phase
         test_epoch = "best" if len(self.valid_splits) > 0 else cur_epoch
@@ -466,16 +433,24 @@ class RunnerBase:
 
     def train_epoch(self, epoch):
         # train
-        self.model.train()
+        self.ds_model.train()
+
+        if epoch == 0:
+            pass
+
+        else: #* Here is for BLIP and BLIP-2
+            for param_group in self.ds_optim.param_groups:
+                param_group["lr"] = (self.config.run_cfg.init_lr - self.config.run_cfg.min_lr) * 0.5 * (1.0 
+                                                                                                        + math.cos(math.pi * epoch / self.config.run_cfg.max_epoch)) +  self.config.run_cfg.min_lr
 
         #! some elements has been replaced by deepspeed elements
         return self.task.train_epoch(
             epoch=epoch,
-            model = self.ds_model,
-            data_loader = self.ds_dataloader,
-            optimizer = self.ds_optim,
+            model=self.ds_model,
+            data_loader=self.ds_dataloader,
+            optimizer=self.ds_optim,
             scaler=self.scaler,
-            lr_scheduler = self.ds_lr_sch,
+            lr_scheduler=self.ds_lr_sch,
             cuda_enabled=self.cuda_enabled,
             log_freq=self.log_freq,
             accum_grad_iters=self.accum_grad_iters,
@@ -493,15 +468,17 @@ class RunnerBase:
                 During training, we will reload the best checkpoint for validation.
                 During testing, we will use provided weights and skip reloading the best checkpoint .
         """
-        data_loader = self.dataloaders.get(split_name, None)
+        #! dataloader should be specified by "val" or "test"
+        # data_loader = self.dataloaders.get(split_name, None)
+        data_loader = self.ds_test_dataloader
         assert data_loader, "data_loader for split {} is None.".format(split_name)
 
         # TODO In validation, you need to compute loss as well as metrics
         # TODO consider moving to model.before_evaluation()
-        model = self.unwrap_dist_model(self.model)
-        if not skip_reload and cur_epoch == "best":
-            model = self._reload_best_model(model)
-        model.eval()
+        # if not skip_reload and cur_epoch == "best":
+        #     model = self._reload_best_model(model)
+        model = self.ds_model_test
+        model.module.eval()
 
         self.task.before_evaluation(
             model=model,
@@ -603,34 +580,11 @@ class RunnerBase:
 
         return loaders
 
-    @main_process
+    #! The function of save_checkpoint should be reproduced.
+    #! First, this function should not be called only on the main process. Second, The content of the function should be written by deepspeed
     def _save_checkpoint(self, cur_epoch, is_best=False):
-        """
-        Save the checkpoint at the current epoch.
-        """
-        model_no_ddp = self.unwrap_dist_model(self.model)
-        param_grad_dic = {
-            k: v.requires_grad for (k, v) in model_no_ddp.named_parameters()
-        }
-        state_dict = model_no_ddp.state_dict()
-        for k in list(state_dict.keys()):
-            if k in param_grad_dic.keys() and not param_grad_dic[k]:
-                # delete parameters that do not require gradient
-                del state_dict[k]
-        save_obj = {
-            "model": state_dict,
-            "optimizer": self.optimizer.state_dict(),
-            "config": self.config.to_dict(),
-            "scaler": self.scaler.state_dict() if self.scaler else None,
-            "epoch": cur_epoch,
-        }
-        save_to = os.path.join(
-            self.output_dir,
-            "checkpoint_{}.pth".format("best" if is_best else cur_epoch),
-        )
-        logging.info("Saving checkpoint at epoch {} to {}.".format(cur_epoch, save_to))
-        torch.save(save_obj, save_to)
-
+        pass
+        
     def _reload_best_model(self, model):
         """
         Load the best checkpoint for evaluation.
@@ -665,8 +619,8 @@ class RunnerBase:
         else:
             raise RuntimeError("checkpoint url or path is invalid")
 
-        state_dict = checkpoint["model"]
-        self.unwrap_dist_model(self.model).load_state_dict(state_dict)
+        state_dict = checkpoint
+        self.unwrap_dist_model(self.ds_model).load_state_dict(state_dict)
 
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         if self.scaler and "scaler" in checkpoint:

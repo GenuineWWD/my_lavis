@@ -48,12 +48,8 @@ class CaptionTask(BaseTask):
         results = []
 
         # run_cfg = slf.cfg.run_cfg
-        captions = model.generate(
-            samples,
-            use_nucleus_sampling=False,
-            num_beams=self.num_beams,
-            max_length=self.max_len,
-            min_length=self.min_len,
+        captions = model.forward(
+            samples
         )
 
         img_ids = samples["image_id"]
