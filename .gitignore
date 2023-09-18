@@ -159,3 +159,5 @@ lavis_data/
 ckpt/*
 ckpt_blip
 ckpt_blip_iter
+ckpt_debug
+*.pth

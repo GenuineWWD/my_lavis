@@ -211,8 +211,8 @@ class BaseTask:
 
         for i in metric_logger.log_every(range(iters_per_epoch), log_freq, header):
             # if using iter-based runner, we stop after iters_per_epoch iterations.
-            # if i % 500 == 0:
-            #     model.save_checkpoint(ckpt_path, i)
+            if i % 500 == 0:
+                model.save_checkpoint(ckpt_path, i)
 
             if i >= iters_per_epoch:
                 break
