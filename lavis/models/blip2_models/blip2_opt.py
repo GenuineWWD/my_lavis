@@ -48,7 +48,7 @@ class Blip2OPT(Blip2Base):
         vit_precision="fp16",
         freeze_vit=True,
         num_query_token=32,
-        opt_model="/public/home/hpctest_xjtu/data/hf_home/opt-2.7b",
+        opt_model="/work/home/acehekbmzh/data/hf_home/opt-2.7b",
         prompt="",
         max_txt_len=32,
         apply_lemmatizer=False,
@@ -233,6 +233,9 @@ class Blip2OPT(Blip2Base):
             # new version for transformers>=4.27
             inputs_embeds = self.opt_model.get_input_embeddings()(opt_tokens.input_ids)
             inputs_embeds = torch.cat([inputs_opt,inputs_embeds],dim=1)
+
+            import deepspeed
+            print(f"The rank here is {deepspeed.comm.get_rank()} and Done !")
             
             outputs = self.opt_model.generate(
                 inputs_embeds=inputs_embeds, 
@@ -248,6 +251,9 @@ class Blip2OPT(Blip2Base):
                 length_penalty=length_penalty,
                 num_return_sequences=num_captions,
             )
+
+            print(f"The rank here is {deepspeed.comm.get_rank()} and Done Done !")
+
             output_text = self.opt_tokenizer.batch_decode(
                 outputs, skip_special_tokens=True
             )

@@ -109,7 +109,7 @@ def warmup_lr_schedule(optimizer, step, max_step, init_lr, max_lr):
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
 
-    #* for blip2, init_lr = self.init_lr = 1e-5; max_lr = self.init_lr = 1e-5
+    #* for blip2, init_lr = self.init_lr = 1e-8; max_lr = self.init_lr = 1e-5
 
 def step_lr_schedule(optimizer, epoch, init_lr, min_lr, decay_rate):
     """Decay the learning rate"""

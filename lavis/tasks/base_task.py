@@ -211,18 +211,23 @@ class BaseTask:
 
         for i in metric_logger.log_every(range(iters_per_epoch), log_freq, header):
             # if using iter-based runner, we stop after iters_per_epoch iterations.
-            if i % 500 == 0:
-                model.save_checkpoint(ckpt_path, i)
+            # if i % 500 == 0:
+            #     # import deepspeed
+            #     # for name, param in model.named_parameters():
+            #     #     print(f"The rank now is {deepspeed.comm.get_rank()}")
+            #     #     print(f"The param now is {param}")
+            #     #     print(f"The name now is {name}")
+            #     model.save_checkpoint(ckpt_path, i)
 
             if i >= iters_per_epoch:
                 break
             
-            # if epoch == 0: #* on the first epoch , iter-based warmup lr_schedule will be called, so update lr here 
+            if epoch == 0: #* on the first epoch , iter-based warmup lr_schedule will be called, so update lr here 
 
-            #     for param_group in optimizer.param_groups:
-            #         param_group["lr"] = min(self.config.run_cfg.init_lr , 
-            #                                 self.config.run_cfg.warmup_lr + 
-            #                                 (self.config.run_cfg.init_lr - self.config.run_cfg.warmup_lr) * i / max(self.config.run_cfg.warmup_steps, 1))
+                for param_group in optimizer.param_groups:
+                    param_group["lr"] = min(self.config.run_cfg.init_lr , 
+                                            self.config.run_cfg.warmup_lr + 
+                                            (self.config.run_cfg.init_lr - self.config.run_cfg.warmup_lr) * i / max(self.config.run_cfg.warmup_steps, 1))
         
             samples = next(iter_loader)
             

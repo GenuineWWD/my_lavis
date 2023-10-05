@@ -10,24 +10,25 @@ ds_config = {
       "stage3_max_live_parameters": 1e9,
       "stage3_max_reuse_distance": 1e9,
       "stage3_gather_16bit_weights_on_model_save": False,
+      "gradient_clipping": "auto",
       # "zero_quantized_weights": True,
       #   "zero_hpz_partition_size": 4,
       #   "zero_quantized_gradients": True,
 
-#       "offload_optimizer": {
-#           "device": "cpu",
-#           "pin_memory": True
-# },
-#       "offload_param": {
-#             "device": "cpu",
-#             "pin_memory": True
-# },
+      "offload_optimizer": {
+          "device": "cpu",
+          "pin_memory": True
+},
+      "offload_param": {
+            "device": "cpu",
+            "pin_memory": True
+},
   },
   
   "fp16": {
       "enabled": False,
       "auto_cast": "auto",
-      "loss_scale": 10,
+      "loss_scale": 128,
       "initial_scale_power": 32,
       "loss_scale_window": 1000,
       "hysteresis": 2,
@@ -53,7 +54,7 @@ test_ds_config ={
   "gradient_accumulation_steps": 1,
   "steps_per_print": 1,
   "zero_optimization": {
-        "stage": 2,
+        "stage": 3,
         "contiguous_gradients": True,
         "overlap_comm": True,
         "reduce_scatter": True,

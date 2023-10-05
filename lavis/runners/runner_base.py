@@ -132,7 +132,7 @@ class RunnerBase:
                 {"params": p_non_wd, "weight_decay": 0},
             ]
             beta2 = self.config.run_cfg.get("beta2", 0.999)
-            self._optimizer = torch.optim.AdamW(
+            self._optimizer = deepspeed.ops.adam.DeepSpeedCPUAdam(
                 optim_params,
                 lr=float(self.config.run_cfg.init_lr),
                 weight_decay=float(self.config.run_cfg.weight_decay),
@@ -499,7 +499,7 @@ class RunnerBase:
 
             #         # TODO : The dir of ckpt should be relative to the name of expriment
 
-                ckpt_path = "ckpt/" + self.config.run_cfg.task + str(self.config.config.datasets.keys())
+                ckpt_path = "ckpt/" + self.config.model_cfg.arch + "/" + self.config.run_cfg.task + str(self.config.config.datasets.keys())
                 self.ds_model.save_checkpoint(ckpt_path, cur_epoch)
 
                 # self.log_stats(val_log, split_name)
